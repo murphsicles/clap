@@ -197,9 +197,15 @@ impl Arg {
     pub fn possible_vals(&self) -> &[String] { &self.possible_values }
     pub fn is_terminator_flag(&self) -> bool { self.is_terminator }
     pub fn takes_value(&self) -> bool {
-        matches!(self.action, ArgAction::Set | ArgAction::Append)
+        match self.action {
+            ArgAction::Set | ArgAction::Append => true,
+            _ => false,
+        }
     }
     pub fn is_boolean(&self) -> bool {
-        matches!(self.action, ArgAction::SetTrue | ArgAction::SetFalse | ArgAction::Count)
+        match self.action {
+            ArgAction::SetTrue | ArgAction::SetFalse | ArgAction::Count => true,
+            _ => false,
+        }
     }
 }

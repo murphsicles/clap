@@ -180,7 +180,7 @@ impl Command {
                     _ => {
                         std::io::stderr().write(e.message().as_bytes());
                         std::io::stderr().write("\n".as_bytes());
-                        if self.help_on_error && !matches!(self.args.is_empty(), true) {
+                        if self.help_on_error && !self.args.is_empty() {
                             let usage = output::generate_usage(&self.name, &self.args, &self.subcommand_infos());
                             std::io::stderr().write("\n".as_bytes());
                             std::io::stderr().write(usage.as_bytes());
@@ -462,10 +462,13 @@ impl Command {
                 }
             }
             // Set boolean defaults
-            if matches!(arg.arg_action(), ArgAction::SetFalse) {
-                if !matches.contains_id(arg.id()) {
-                    matches.set_flag_count(arg.id(), 1); // default is true, --flag sets false
+            match arg.arg_action() {
+                ArgAction::SetFalse => {
+                    if !matches.contains_id(arg.id()) {
+                        matches.set_flag_count(arg.id(), 1);
+                    }
                 }
+                _ => {}
             }
         }
 
