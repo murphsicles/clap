@@ -1,0 +1,537 @@
+// @cli/clap::command — The Command builder and parser.
+//
+// Command is the main entry point for defining CLI interfaces.
+// Uses a single-pass parser for efficiency — no backfilling or multiple phases.
+//
+// # Design
+//
+// - Args are stored in a packed Vec<Arg> (no HashMap lookup for small N)
+// - Linear search through the arg list is actually faster than hashing for < 50 args
+// - Single-pass through argv: each arg is classified and processed immediately
+// - Positional args are matched by their index in the argv (gaps filled with None)
+
+use std::option::Option;
+use std::string::{String, ToString};
+use std::vec::Vec;
+use crate::arg::{Arg, ArgAction};
+use crate::matches::ArgMatches;
+use crate::output;
+use crate::error::{Error, ErrorKind};
+
+/// Information about a registered subcommand (for help display).
+pub struct SubcommandInfo {
+    name: String,
+    about: Option<String>,
+}
+
+impl SubcommandInfo {
+    pub fn name(&self) -> &str { &self.name }
+    pub fn about(&self) -> Option<&str> { self.about.as_deref() }
+}
+
+/// The main CLI command definition.
+///
+/// Build your CLI interface by creating a `Command`, adding `Arg`s and
+/// subcommands, then calling `get_matches()` to parse real argv.
+///
+/// # Example
+/// ```
+/// let matches = Command::new("myapp")
+///     .version("1.0")
+///     .about("Does stuff")
+///     .add_arg(Arg::new("verbose").short('v').long("verbose"))
+///     .get_matches();
+/// ```
+pub struct Command {
+    // ── Metadata ──
+    name: String,
+    version: Option<String>,
+    author: Option<String>,
+    about: Option<String>,
+
+    // ── Args ──
+    args: Vec<Arg>,
+    subcommands: Vec<Command>,
+
+    // ── Behavior flags ──
+    no_binary_name: bool,
+    disable_help_flag: bool,
+    disable_version_flag: bool,
+    help_on_error: bool,
+}
+
+impl Command {
+    /// Creates a new command with the given name.
+    pub fn new(name: impl Into<String>) -> Self {
+        Command {
+            name: name.into(),
+            version: Option::None,
+            author: Option::None,
+            about: Option::None,
+            args: Vec::new(),
+            subcommands: Vec::new(),
+            no_binary_name: false,
+            disable_help_flag: false,
+            disable_version_flag: false,
+            help_on_error: true,
+        }
+    }
+
+    // ── Metadata setters ──
+
+    pub fn version(mut self, ver: impl Into<String>) -> Self {
+        self.version = Option::Some(ver.into());
+        self
+    }
+
+    pub fn author(mut self, a: impl Into<String>) -> Self {
+        self.author = Option::Some(a.into());
+        self
+    }
+
+    pub fn about(mut self, a: impl Into<String>) -> Self {
+        self.about = Option::Some(a.into());
+        self
+    }
+
+    pub fn name(mut self, n: impl Into<String>) -> Self {
+        self.name = n.into();
+        self
+    }
+
+    // ── Flag setters ──
+
+    pub fn no_binary_name(mut self, yes: bool) -> Self {
+        self.no_binary_name = yes;
+        self
+    }
+
+    pub fn disable_help_flag(mut self, yes: bool) -> Self {
+        self.disable_help_flag = yes;
+        self
+    }
+
+    pub fn disable_version_flag(mut self, yes: bool) -> Self {
+        self.disable_version_flag = yes;
+        self
+    }
+
+    pub fn help_on_error(mut self, yes: bool) -> Self {
+        self.help_on_error = yes;
+        self
+    }
+
+    // ── Arg management ──
+
+    /// Adds an argument definition.
+    pub fn add_arg(mut self, arg: Arg) -> Self {
+        self.args.push(arg);
+        self
+    }
+
+    /// Adds multiple arguments.
+    pub fn add_args(mut self, args: Vec<Arg>) -> Self {
+        for arg in args {
+            self.args.push(arg);
+        }
+        self
+    }
+
+    // ── Subcommand management ──
+
+    /// Adds a subcommand.
+    pub fn subcommand(mut self, cmd: Command) -> Self {
+        self.subcommands.push(cmd);
+        self
+    }
+
+    /// Adds multiple subcommands.
+    pub fn subcommands(mut self, cmds: Vec<Command>) -> Self {
+        for cmd in cmds {
+            self.subcommands.push(cmd);
+        }
+        self
+    }
+
+    // ── Parsing ──
+
+    /// Parses the real command-line arguments (from `std::env::args()`).
+    /// Prints help on error and exits.
+    pub fn get_matches(self) -> ArgMatches {
+        match self.try_get_matches() {
+            Result::Ok(m) => m,
+            Result::Err(e) => {
+                match e.kind() {
+                    ErrorKind::HelpDisplayed => {
+                        let usage = output::generate_usage(&self.name, &self.args, &self.subcommand_infos());
+                        let help = output::generate_help(
+                            &self.name, self.version.as_deref(), self.about.as_deref(),
+                            &self.args, &self.subcommand_infos(), &usage,
+                        );
+                        std::io::stdout().write(help.as_bytes());
+                        std::process::exit(0);
+                    }
+                    ErrorKind::VersionDisplayed => {
+                        let ver = output::generate_version(&self.name, self.version.as_deref());
+                        std::io::stdout().write(ver.as_bytes());
+                        std::io::stdout().write("\n".as_bytes());
+                        std::process::exit(0);
+                    }
+                    _ => {
+                        std::io::stderr().write(e.message().as_bytes());
+                        std::io::stderr().write("\n".as_bytes());
+                        if self.help_on_error && !matches!(self.args.is_empty(), true) {
+                            let usage = output::generate_usage(&self.name, &self.args, &self.subcommand_infos());
+                            std::io::stderr().write("\n".as_bytes());
+                            std::io::stderr().write(usage.as_bytes());
+                            std::io::stderr().write("\n".as_bytes());
+                        }
+                        // Try to show help
+                        let usage = output::generate_usage(&self.name, &self.args, &self.subcommand_infos());
+                        let help = output::generate_help(
+                            &self.name, self.version.as_deref(), self.about.as_deref(),
+                            &self.args, &self.subcommand_infos(), &usage,
+                        );
+                        std::io::stderr().write("\n".as_bytes());
+                        std::io::stderr().write(help.as_bytes());
+                        std::process::exit(1);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Parses arguments from `std::env::args()` and returns a Result.
+    pub fn try_get_matches(self) -> Result<ArgMatches, Error> {
+        let args: Vec<String> = std::env::args().collect();
+        self.try_get_matches_from(args)
+    }
+
+    /// Parses from an explicit list of argument strings.
+    pub fn try_get_matches_from<I, T>(self, itr: I) -> Result<ArgMatches, Error>
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<String>,
+    {
+        let raw: Vec<String> = itr.into_iter().map(|s| s.into()).collect();
+        self.parse_inner(&raw)
+    }
+
+    /// Parses the real args and panics on error (for simple scripts).
+    pub fn get_matches_from<I, T>(self, itr: I) -> ArgMatches
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<String>,
+    {
+        match self.try_get_matches_from(itr) {
+            Result::Ok(m) => m,
+            Result::Err(e) => {
+                panic!("{}", e.message());
+            }
+        }
+    }
+
+    // ── Internal parsing ──
+
+    fn parse_inner(self, raw: &[String]) -> Result<ArgMatches, Error> {
+        let mut matches = ArgMatches::new();
+
+        // Determine start index (skip binary name unless no_binary_name)
+        let start = if self.no_binary_name { 0 } else { 1 };
+
+        // Separate positional indices from named args
+        let mut positional_count: u32 = 0;
+        for arg in &self.args {
+            if let Option::Some(idx) = arg.positional_index() {
+                if idx >= positional_count {
+                    positional_count = idx + 1;
+                }
+            }
+        }
+
+        // Build quick lookup structures
+        let mut short_map: Vec<(char, u32)> = Vec::new();  // char -> arg index
+        let mut long_map: Vec<(&str, u32)> = Vec::new();    // name -> arg index
+
+        for (i, arg) in self.args.iter().enumerate() {
+            let idx = i as u32;
+            if let Option::Some(ch) = arg.short_char() {
+                short_map.push((ch, idx));
+            }
+            if let Option::Some(long) = arg.long_name() {
+                long_map.push((long, idx));
+            }
+        }
+
+        // Track which positional slots have been filled
+        let mut positional_filled: Vec<bool> = vec![false; positional_count as usize];
+        let mut next_positional: u32 = 0;
+
+        // Check if we have built-in help/version flags
+        let has_help = !self.disable_help_flag;
+        let has_version = !self.disable_version_flag && self.version.is_some();
+
+        // Also track whether user-defined -h/--help or -V/--version exist
+        let has_user_help_short = short_map.iter().any(|(c, _)| *c == 'h');
+        let has_user_help_long = long_map.iter().any(|(n, _)| *n == "help");
+        let has_user_version_short = short_map.iter().any(|(c, _)| *c == 'V');
+        let has_user_version_long = long_map.iter().any(|(n, _)| *n == "version");
+
+        // ── Single pass through argv ──
+        let mut i = start;
+        let mut found_terminator = false;
+
+        while i < raw.len() {
+            let arg_str = &raw[i];
+
+            // After --, everything is trailing
+            if found_terminator {
+                matches.add_trailing(arg_str);
+                i += 1;
+                continue;
+            }
+
+            if arg_str == "--" {
+                found_terminator = true;
+                i += 1;
+                continue;
+            }
+
+            // Check for named flags/starts with -
+            if arg_str.starts_with("-") && arg_str.len() > 1 {
+                // Long flag (--xxx)
+                if arg_str.starts_with("--") {
+                    let name = &arg_str[2..];
+
+                    // Check built-in help
+                    if has_help && !has_user_help_long && (name == "help") {
+                        matches.set_help();
+                        return Result::Err(Error::new(ErrorKind::HelpDisplayed, ""));
+                    }
+
+                    // Check built-in version
+                    if has_version && !has_user_version_long && (name == "version") {
+                        matches.set_version();
+                        return Result::Err(Error::new(ErrorKind::VersionDisplayed, ""));
+                    }
+
+                    // Find the arg definition
+                    match find_long(&long_map, &self.args, name) {
+                        Option::Some((arg_idx, arg)) => {
+                            process_arg(arg_idx, arg, &mut matches, &raw, &mut i)
+                                .map_err(|e| e)?;
+                        }
+                        Option::None => {
+                            // Suggest similar args
+                            let valid: Vec<String> = long_map.iter()
+                                .map(|(n, _)| format!("--{}", n)).collect();
+                            return Result::Err(output::unknown_arg_error(arg_str, &valid));
+                        }
+                    }
+                } else {
+                    // Short flags (-x, -xyz)
+                    let chars: Vec<char> = arg_str[1..].chars().collect();
+                    let mut j = 0;
+                    while j < chars.len() {
+                        let ch = chars[j];
+
+                        // Check built-in help short
+                        if has_help && !has_user_help_short && (ch == 'h') {
+                            matches.set_help();
+                            return Result::Err(Error::new(ErrorKind::HelpDisplayed, ""));
+                        }
+
+                        // Build-in version short
+                        if has_version && !has_user_version_short && (ch == 'V') {
+                            matches.set_version();
+                            return Result::Err(Error::new(ErrorKind::VersionDisplayed, ""));
+                        }
+
+                        match find_short(&short_map, &self.args, ch) {
+                            Option::Some((arg_idx, arg)) => {
+                                if arg.takes_value() {
+                                    // The value is either the rest of this token or next token(s)
+                                    let remaining: String = chars[j + 1..].iter().collect();
+                                    if !remaining.is_empty() {
+                                        matches.set_value(arg.id(), &remaining);
+                                    } else {
+                                        i += 1;
+                                        if i >= raw.len() {
+                                            return Result::Err(Error::new(
+                                                ErrorKind::NoValue,
+                                                format!("Flag '-{}' requires a value", ch),
+                                            ));
+                                        }
+                                        matches.set_value(arg.id(), &raw[i]);
+                                    }
+                                    j = chars.len();  // consumed all remaining chars
+                                } else {
+                                    // Boolean flag/action
+                                    process_arg_action(arg, &mut matches);
+                                }
+                            }
+                            Option::None => {
+                                return Result::Err(Error::new(
+                                    ErrorKind::UnknownArgument,
+                                    format!("Unknown flag: -{}", ch),
+                                ));
+                            }
+                        }
+                        j += 1;
+                    }
+                }
+            } else {
+                // Positional argument
+                // First check if any named arg at `i` expects a value
+                // (This handles the case where an option's value looks like a positional)
+
+                // Try to match to a positional arg slot
+                if next_positional < positional_count as u32 {
+                    // Find the arg for this positional index
+                    for arg in &self.args {
+                        if arg.positional_index() == Option::Some(next_positional) {
+                            matches.set_value(arg.id(), arg_str);
+                            positional_filled[next_positional as usize] = true;
+                            break;
+                        }
+                    }
+                    next_positional += 1;
+                } else {
+                    // Check if it's a subcommand
+                    let mut found_sub = false;
+                    for sub in &self.subcommands {
+                        if sub.name == *arg_str {
+                            // Parse remaining args with subcommand
+                            let sub_raw: Vec<String> = raw[i..].to_vec();
+                            let sub_matches = sub.clone().parse_inner(&sub_raw)?;
+                            matches.set_subcommand(&sub.name, sub_matches);
+                            found_sub = true;
+                            break;
+                        }
+                    }
+
+                    if !found_sub {
+                        return Result::Err(Error::new(
+                            ErrorKind::UnknownArgument,
+                            format!("Unexpected argument: {}", arg_str),
+                        ));
+                    }
+
+                    // Subcommand consumed the rest
+                    break;
+                }
+            }
+
+            i += 1;
+        }
+
+        // ── Validate required args ──
+        let mut missing: Vec<&str> = Vec::new();
+        for arg in &self.args {
+            if arg.is_required() {
+                let id = arg.id();
+                let mut found = false;
+                for (key, _) in &matches.values {
+                    if key == id { found = true; break; }
+                }
+                for (key, _) in &matches.flags {
+                    if key == id { found = true; break; }
+                }
+                // Also check default
+                if arg.get_default().is_some() {
+                    found = true;
+                    if matches.get_one(id).is_none() {
+                        matches.set_value(id, arg.get_default().unwrap());
+                    }
+                }
+                if !found {
+                    missing.push(id);
+                }
+            }
+        }
+
+        if !missing.is_empty() {
+            return Result::Err(output::missing_required_error(&missing));
+        }
+
+        // ── Apply defaults for non-required args ──
+        for arg in &self.args {
+            if let Option::Some(def) = arg.get_default() {
+                if matches.get_one(arg.id()).is_none() {
+                    matches.set_value(arg.id(), def);
+                }
+            }
+            // Set boolean defaults
+            if matches!(arg.arg_action(), ArgAction::SetFalse) {
+                if !matches.contains_id(arg.id()) {
+                    matches.set_flag_count(arg.id(), 1); // default is true, --flag sets false
+                }
+            }
+        }
+
+        Result::Ok(matches)
+    }
+
+    fn subcommand_infos(&self) -> Vec<SubcommandInfo> {
+        let mut infos = Vec::new();
+        for sub in &self.subcommands {
+            infos.push(SubcommandInfo {
+                name: sub.name.clone(),
+                about: sub.about.clone(),
+            });
+        }
+        infos
+    }
+}
+
+// ─── Helper functions ─────────────────────────────────────────────────────
+
+fn find_short<'a>(short_map: &[(char, u32)], args: &'a [Arg], ch: char) -> Option<(u32, &'a Arg)> {
+    for (c, idx) in short_map {
+        if *c == ch {
+            return Option::Some((*idx, &args[*idx as usize]));
+        }
+    }
+    Option::None
+}
+
+fn find_long<'a>(long_map: &[(&str, u32)], args: &'a [Arg], name: &str) -> Option<(u32, &'a Arg)> {
+    for (n, idx) in long_map {
+        if *n == name {
+            return Option::Some((*idx, &args[*idx as usize]));
+        }
+    }
+    Option::None
+}
+
+fn process_arg(arg_idx: u32, arg: &Arg, matches: &mut ArgMatches, raw: &[String], i: &mut usize) -> Result<(), Error> {
+    if arg.takes_value() {
+        *i += 1;
+        if *i >= raw.len() {
+            return Result::Err(Error::new(
+                ErrorKind::NoValue,
+                format!("Flag '--{}' requires a value", arg.long_name().unwrap_or(arg.id())),
+            ));
+        }
+        if arg.is_multiple() {
+            // Append
+            matches.set_value(arg.id(), &raw[*i]);
+        } else {
+            matches.set_value(arg.id(), &raw[*i]);
+        }
+    } else {
+        process_arg_action(arg, matches);
+    }
+    Result::Ok(())
+}
+
+fn process_arg_action(arg: &Arg, matches: &mut ArgMatches) {
+    match arg.arg_action() {
+        ArgAction::SetTrue => { matches.set_flag_count(arg.id(), 1); }
+        ArgAction::SetFalse => { matches.set_flag_count(arg.id(), 1); }
+        ArgAction::Count => { matches.increment_flag(arg.id()); }
+        ArgAction::Help => { matches.set_help(); }
+        ArgAction::Version => { matches.set_version(); }
+        _ => { matches.set_flag_count(arg.id(), 1); }  // Set/Append handled above
+    }
+}

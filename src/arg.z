@@ -1,0 +1,205 @@
+// @cli/clap::arg — Argument definition and action types.
+//
+// Arg defines a single command-line argument (flag, option, or positional).
+// ArgAction defines what happens when the argument is encountered.
+
+use std::option::Option;
+use std::string::String;
+use std::vec::Vec;
+
+// ─── ArgAction ──────────────────────────────────────────────────────────────
+
+/// Defines what happens when an argument is matched.
+pub enum ArgAction {
+    /// When encountered, store value. Error if no value follows.
+    Set,
+    /// Like Set, but can appear multiple times, appending values.
+    Append,
+    /// Boolean flag: set to true if present.
+    SetTrue,
+    /// Boolean flag: set to false if present.
+    SetFalse,
+    /// Count occurrences (for -vvv verbosity).
+    Count,
+    /// When encountered, help text version.
+    Version,
+    /// When encountered, print help and exit.
+    Help,
+}
+
+// ─── Arg ────────────────────────────────────────────────────────────────────
+
+/// A command-line argument definition.
+///
+/// Supports short flags (`-v`), long flags (`--verbose`), and positional args.
+///
+/// # Example
+/// ```
+/// Arg::new("config")
+///     .short('c')
+///     .long("config")
+///     .help("Sets a config file")
+///     .value_name("FILE")
+///     .required(true)
+/// ```
+pub struct Arg {
+    /// Unique identifier (also used as the long name if no long set)
+    id: String,
+
+    // ── Identity ──
+    /// Short flag character (-v)
+    short: Option<char>,
+    /// Long flag name (--verbose)
+    long: Option<String>,
+
+    // ── Display ──
+    /// Help text shown in --help output
+    help: Option<String>,
+    /// Placeholder name for value in usage text (e.g. "FILE")
+    value_name: Option<String>,
+    /// Displayed default value
+    default_display: Option<String>,
+
+    // ── Behavior ──
+    /// What happens when matched
+    action: ArgAction,
+    /// Whether this arg is required
+    required: bool,
+    /// Whether this arg can appear multiple times
+    multiple: bool,
+    /// Positional index (None = named flag, Some(n) = positional)
+    index: Option<u32>,
+
+    // ── Validation ──
+    /// Default value if not provided
+    default_value: Option<String>,
+    /// Allowed values (for enum-style args)
+    possible_values: Vec<String>,
+    /// Whether to stop parsing after this arg (for --)
+    is_terminator: bool,
+}
+
+impl Arg {
+    /// Creates a new argument with the given ID.
+    ///
+    /// For named args, the ID is also used as the display name.
+    /// For poisitional args, the ID is used to retrive the value.
+    pub fn new(id: impl Into<String>) -> Self {
+        Arg {
+            id: id.into(),
+            short: Option::None,
+            long: Option::None,
+            help: Option::None,
+            value_name: Option::None,
+            default_display: Option::None,
+            action: ArgAction::Set,
+            required: false,
+            multiple: false,
+            index: Option::None,
+            default_value: Option::None,
+            possible_values: Vec::new(),
+            is_terminator: false,
+        }
+    }
+
+    // ── Identity setters ──
+
+    /// Sets the short flag character (e.g. 'v' for -v).
+    pub fn short(mut self, ch: char) -> Self {
+        self.short = Option::Some(ch);
+        self
+    }
+
+    /// Sets the long flag name (e.g. "verbose" for --verbose).
+    pub fn long(mut self, name: impl Into<String>) -> Self {
+        self.long = Option::Some(name.into());
+        self
+    }
+
+    /// Sets the help text shown in --help.
+    pub fn help(mut self, text: impl Into<String>) -> Self {
+        self.help = Option::Some(text.into());
+        self
+    }
+
+    /// Sets the value placeholder name (e.g. "FILE" for --config <FILE>).
+    pub fn value_name(mut self, name: impl Into<String>) -> Self {
+        self.value_name = Option::Some(name.into());
+        self
+    }
+
+    // ── Behavior setters ──
+
+    /// Sets what happens when this arg is matched.
+    pub fn action(mut self, action: ArgAction) -> Self {
+        self.action = action;
+        self
+    }
+
+    /// Sets whether this arg is required.
+    pub fn required(mut self, yes: bool) -> Self {
+        self.required = yes;
+        self
+    }
+
+    /// Sets whether this arg can appear multiple times.
+    pub fn multiple(mut self, yes: bool) -> Self {
+        self.multiple = yes;
+        self
+    }
+
+    /// Sets this as a positional argument at the given index.
+    pub fn index(mut self, idx: u32) -> Self {
+        self.index = Option::Some(idx);
+        self
+    }
+
+    /// Sets a default value if not provided.
+    pub fn default_value(mut self, val: impl Into<String>) -> Self {
+        let s: String = val.into();
+        self.default_value = Option::Some(s.clone());
+        self.default_display = Option::Some(s);
+        self
+    }
+
+    /// Sets a default value with a custom display string.
+    pub fn default_value_if(mut self, val: impl Into<String>, display: impl Into<String>) -> Self {
+        self.default_value = Option::Some(val.into());
+        self.default_display = Option::Some(display.into());
+        self
+    }
+
+    /// Adds a possible value for validation.
+    pub fn possible_value(mut self, val: impl Into<String>) -> Self {
+        self.possible_values.push(val.into());
+        self
+    }
+
+    /// Sets this arg as the terminator (--) — stops parsing further args.
+    pub fn terminator(mut self, yes: bool) -> Self {
+        self.is_terminator = yes;
+        self
+    }
+
+    // ── Getters (used by Command during parsing) ──
+
+    pub fn id(&self) -> &str { &self.id }
+    pub fn short_char(&self) -> Option<char> { self.short }
+    pub fn long_name(&self) -> Option<&str> { self.long.as_deref() }
+    pub fn help_text(&self) -> Option<&str> { self.help.as_deref() }
+    pub fn value_placeholder(&self) -> Option<&str> { self.value_name.as_deref() }
+    pub fn arg_action(&self) -> &ArgAction { &self.action }
+    pub fn is_required(&self) -> bool { self.required }
+    pub fn is_multiple(&self) -> bool { self.multiple }
+    pub fn positional_index(&self) -> Option<u32> { self.index }
+    pub fn get_default(&self) -> Option<&str> { self.default_value.as_deref() }
+    pub fn default_display_str(&self) -> Option<&str> { self.default_display.as_deref() }
+    pub fn possible_vals(&self) -> &[String] { &self.possible_values }
+    pub fn is_terminator_flag(&self) -> bool { self.is_terminator }
+    pub fn takes_value(&self) -> bool {
+        matches!(self.action, ArgAction::Set | ArgAction::Append)
+    }
+    pub fn is_boolean(&self) -> bool {
+        matches!(self.action, ArgAction::SetTrue | ArgAction::SetFalse | ArgAction::Count)
+    }
+}

@@ -1,0 +1,19 @@
+[package]
+name = "@cli/clap"
+version = "4.5.0"
+edition = "2026"
+authors = ["Zak Murphy <zak@z-lang.org>"]
+description = "Command line argument parser for Zeta"
+license = "MIT"
+repository = "https://github.com/murphsicles/clap"
+keywords = ["cli", "args", "parser"]
+categories = ["command-line-interface"]
+
+[fmt]
+style = "zeta-strict"
+max_width = 100
+use_tabs = false
+
+[lint]
+tool = "zippy"
+level = "pedantic"

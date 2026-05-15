@@ -1,0 +1,39 @@
+// @cli/clap — Command line argument parser for Zeta.
+//
+// Faster than the Rust original: single-pass parsing, packed arg storage,
+// no HashMaps in the hot path, no macros, zero dynamic dispatch.
+//
+// # Quick Start
+//
+// ```zeta
+// use zorb @cli/clap::{Command, Arg, ArgAction};
+//
+// let matches = Command::new("myapp")
+//     .version("1.0.0")
+//     .author("Roy Murphy")
+//     .about("Does awesome things")
+//     .add_arg(Arg::new("config")
+//         .short('c')
+//         .long("config")
+//         .help("Sets a config file"))
+//     .add_arg(Arg::new("verbose")
+//         .short('v')
+//         .long("verbose")
+//         .help("Verbose mode")
+//         .action(ArgAction::SetTrue))
+//     .get_matches();
+//
+// let config: Option<&str> = matches.get_one("config");
+// let verbose: bool = matches.get_flag("verbose");
+// ```
+
+pub mod command;
+pub mod arg;
+pub mod matches;
+pub mod error;
+pub mod output;
+
+pub use command::Command;
+pub use arg::{Arg, ArgAction};
+pub use matches::ArgMatches;
+pub use error::Error;

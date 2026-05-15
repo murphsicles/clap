@@ -1,0 +1,196 @@
+// @cli/clap::output — Help text and usage output generation.
+//
+// Generates formatted help output from Command and Arg metadata.
+// No dynamic dispatch, no trait objects — just string formatting.
+
+use std::string::{String, ToString};
+use std::vec::Vec;
+use crate::arg::{Arg, ArgAction};
+use crate::error::{Error, ErrorKind};
+
+/// Generates the full help text for a command.
+pub fn generate_help(cmd_name: &str, version: Option<&str>, about: Option<&str>,
+                     args: &[Arg], subcommands: &[super::command::SubcommandInfo],
+                     usage: &str) -> String {
+    let mut out = String::new();
+
+    // Header
+    out.push_str(&format!("{}", cmd_name));
+    if let Option::Some(v) = version {
+        out.push_str(" ");
+        out.push_str(v);
+    }
+    out.push_str("\n\n");
+
+    // About
+    if let Option::Some(a) = about {
+        out.push_str(a);
+        out.push_str("\n\n");
+    }
+
+    // Usage
+    out.push_str("Usage: ");
+    out.push_str(usage);
+    out.push_str("\n\n");
+
+    // Positional args first
+    let mut positional: Vec<&Arg> = Vec::new();
+    let mut named: Vec<&Arg> = Vec::new();
+    for arg in args {
+        match arg.positional_index() {
+            Option::Some(_) => positional.push(arg),
+            Option::None => named.push(arg),
+        }
+    }
+
+    if !positional.is_empty() {
+        out.push_str("Arguments:\n");
+        for arg in &positional {
+            format_arg_help(&mut out, arg);
+        }
+        out.push_str("\n");
+    }
+
+    if !named.is_empty() {
+        out.push_str("Options:\n");
+        for arg in &named {
+            format_arg_help(&mut out, arg);
+        }
+        out.push_str("\n");
+    }
+
+    // Subcommands
+    if !subcommands.is_empty() {
+        out.push_str("Subcommands:\n");
+        for sub in subcommands {
+            let name = sub.name();
+            let about = sub.about().unwrap_or("");
+            out.push_str(&format!("  {:<30} {}\n", name, about));
+        }
+        out.push_str("\n");
+    }
+
+    out
+}
+
+fn format_arg_help(out: &mut String, arg: &Arg) {
+    let mut flags = String::new();
+
+    // Short flag
+    if let Option::Some(ch) = arg.short_char() {
+        flags.push('-');
+        flags.push(ch);
+    }
+
+    // Long flag
+    if let Option::Some(long) = arg.long_name() {
+        if !flags.is_empty() {
+            flags.push_str(", ");
+        }
+        flags.push_str("--");
+        flags.push_str(long);
+    }
+
+    // Value placeholder
+    if arg.takes_value() {
+        let placeholder = arg.value_placeholder().unwrap_or("VALUE");
+        if let Option::Some(_) = arg.long_name() {
+            flags.push_str(" <");
+            flags.push_str(placeholder);
+            flags.push('>');
+        } else if !flags.is_empty() {
+            flags.push_str(" <");
+            flags.push_str(placeholder);
+            flags.push('>');
+        }
+    }
+
+    // Help text
+    let mut line = format!("  {:<30}", flags);
+    if let Option::Some(h) = arg.help_text() {
+        line.push_str(h);
+    }
+
+    // Default value
+    if let Option::Some(d) = arg.default_display_str() {
+        line.push_str(" [default: ");
+        line.push_str(d);
+        line.push(']');
+    }
+
+    out.push_str(&line);
+    out.push('\n');
+}
+
+/// Generates the usage string for a command.
+pub fn generate_usage(cmd_name: &str, args: &[Arg], subcommands: &[super::command::SubcommandInfo]) -> String {
+    let mut usage = String::new();
+    usage.push_str(cmd_name);
+
+    let mut has_subcmds = !subcommands.is_empty();
+
+    for arg in args {
+        match arg.positional_index() {
+            Option::Some(idx) => {
+                let placeholder = arg.value_placeholder().unwrap_or(arg.id());
+                if arg.is_required() {
+                    usage.push_str(" <");
+                    usage.push_str(placeholder);
+                    usage.push('>');
+                } else {
+                    usage.push_str(" [");
+                    usage.push_str(placeholder);
+                    usage.push(']');
+                }
+            }
+            Option::None => {
+                // Named flags — show optional
+                if !arg.is_boolean() || arg.is_required() {
+                    let placeholder = arg.value_placeholder().unwrap_or("VALUE");
+                    usage.push_str(" [--");
+                    usage.push_str(arg.long_name().unwrap_or(arg.id()));
+                    usage.push_str(" <");
+                    usage.push_str(placeholder);
+                    usage.push_str(">]");
+                }
+            }
+        }
+    }
+
+    if has_subcmds {
+        usage.push_str(" <subcommand>");
+    }
+
+    usage
+}
+
+/// Generates the version string.
+pub fn generate_version(cmd_name: &str, version: Option<&str>) -> String {
+    match version {
+        Option::Some(v) => format!("{} {}", cmd_name, v),
+        Option::None => cmd_name.to_string(),
+    }
+}
+
+/// Creates an error for unknown arguments.
+pub fn unknown_arg_error(arg: &str, valid_args: &[String]) -> Error {
+    let mut msg = format!("Unknown argument: {}", arg);
+    if !valid_args.is_empty() {
+        msg.push_str("\n\nDid you mean?");
+        for valid in valid_args {
+            msg.push_str("\n  ");
+            msg.push_str(valid);
+        }
+    }
+    Error::new(ErrorKind::UnknownArgument, msg)
+}
+
+/// Creates an error for missing required arguments.
+pub fn missing_required_error(missing: &[&str]) -> Error {
+    let mut msg = String::from("The following required arguments were not provided:");
+    for name in missing {
+        msg.push_str("\n  ");
+        msg.push_str(name);
+    }
+    Error::new(ErrorKind::MissingRequiredArgument, msg)
+}

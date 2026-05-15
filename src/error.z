@@ -1,0 +1,46 @@
+// @cli/clap::error — Error types for argument parsing.
+
+use std::string::String;
+use std::fmt::Debug;
+
+/// Errors that can occur during argument parsing.
+pub struct Error {
+    kind: ErrorKind,
+    message: String,
+}
+
+/// Categories of parsing errors.
+pub enum ErrorKind {
+    /// Unknown flag or argument
+    UnknownArgument,
+    /// Missing required argument
+    MissingRequiredArgument,
+    /// Argument requires a value but none was provided
+    NoValue,
+    /// Invalid value for an argument (e.g. wrong type)
+    InvalidValue,
+    /// Too many positional arguments
+    TooManyValues,
+    /// Help was displayed (not really an error)
+    HelpDisplayed,
+    /// Version was displayed (not really an error)
+    VersionDisplayed,
+}
+
+impl Error {
+    pub fn new(kind: ErrorKind, msg: impl Into<String>) -> Self {
+        Error {
+            kind: kind,
+            message: msg.into(),
+        }
+    }
+
+    pub fn kind(&self) -> &ErrorKind { &self.kind }
+    pub fn message(&self) -> &str { &self.message }
+}
+
+impl Debug for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
