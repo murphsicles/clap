@@ -1,0 +1,5 @@
+# Zeta source files - highlighted as Rust (GitHub has no native Zeta support)
+*.z linguist-language=Rust linguist-detectable=true
+*.zeta linguist-language=Rust linguist-detectable=true
+*.zorb linguist-generated=true
+zorb.toml linguist-language=TOML linguist-detectable=false
