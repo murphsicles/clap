@@ -1,0 +1,4 @@
+// Auto-converted from /tmp/df-clap-4.6.1/clap-4.6.1/src/_derive/mod.rs
+
+pub mod _tutorial;
+#[doc(inline)] pub use crate::_cookbook;
