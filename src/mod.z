@@ -1,20 +1,2 @@
-// Auto-converted from /tmp/df-clap-4.6.1/clap-4.6.1/src/lib.rs
-
+// @cli/clap v4.6.1
 pub use clap_builder::*;
-#[cfg(feature = "derive")] #[doc(hidden)] pub use clap_derive::{ self, Args, Parser, Subcommand, ValueEnum };
-#[cfg(feature = "unstable-doc")]
-pub mod _concepts;
-#[cfg(feature = "unstable-doc")]
-pub mod _cookbook;
-#[cfg(feature = "unstable-doc")]
-pub mod _derive;
-#[cfg(feature = "unstable-doc")]
-pub mod _faq;
-#[cfg(feature = "unstable-doc")]
-pub mod _features;
-#[cfg(feature = "unstable-doc")]
-pub mod _tutorial;
-#[cfg(doctest)]
-pub struct ReadmeDoctests {
-}
-
