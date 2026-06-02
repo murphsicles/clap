@@ -15,4 +15,4 @@ let matches = Command::new("myapp")
 
 ## License
 
-Open BSV License
+MIT © Zeta Foundation
